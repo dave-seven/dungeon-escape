@@ -311,21 +311,7 @@
       text-align: center;
       line-height: 1.8;
     }
-    #crosshair {
-      position: absolute;
-      top: 50%; left: 50%;
-      width: 14px; height: 14px;
-      transform: translate(-50%,-50%);
-      pointer-events: none;
-      z-index: 12;
-    }
-    #crosshair::before, #crosshair::after {
-      content: '';
-      position: absolute;
-      background: rgba(255,255,255,0.7);
-    }
-    #crosshair::before { width: 14px; height: 2px; top: 6px; left: 0; }
-    #crosshair::after  { width: 2px; height: 14px; top: 0; left: 6px; }
+    #crosshair { display: none; }
     #notification {
       position: absolute;
       top: 50%; left: 50%;
@@ -693,7 +679,7 @@ class DungeonAudio {
       gun_test:       { file: 'loys-test-gun.wav',              volume: 0.8  },
       empty_click:    { file: 'gun-empty-shoot.wav',            volume: 0.6  },
       reload:         { file: 'kg-gun-cock.wav',                volume: 0.6  },
-      explosion:      { file: 'explosion.ogg',                 volume: 0.9  },
+      explosion:      { file: 'explosion.ogg',                 volume: 0.45 },
       hit_enemy:      { file: 'hit-01.ogg',                    volume: 0.6  },
       hit_player:     { file: 'hit-body-01.ogg',               volume: 0.7  },
       enemy_death:    { file: 'hit-04.ogg',                    volume: 0.7  },
@@ -701,8 +687,8 @@ class DungeonAudio {
       footstep_1:     { file: 'footstep-01.ogg',               volume: 0.25 },
       footstep_2:     { file: 'footstep-02.ogg',               volume: 0.25 },
       dash:           { file: 'whoosh-01.ogg',                 volume: 0.6  },
-      grenade_throw:  { file: 'whoosh-03.ogg',                 volume: 0.5  },
-      grenade_bounce: { file: 'metal-hit-01.ogg',              volume: 0.4  },
+      grenade_throw:  { file: 'whoosh-03.ogg',                 volume: 0.3  },
+      grenade_bounce: { file: 'metal-hit-01.ogg',              volume: 0.15 },
       metal_hit_2:    { file: 'metal-hit-02.ogg',              volume: 0.4  },
       pickup_key:     { file: 'key-open-01.ogg',               volume: 0.7  },
       pickup_health:  { file: 'bell-01.ogg',                   volume: 0.5  },
@@ -1643,17 +1629,47 @@ const _ray        = new THREE.Raycaster();
 const _gndPlane   = new THREE.Plane(new THREE.Vector3(0,1,0), -1.0);
 const _aimTarget  = new THREE.Vector3();
 
-let _targetRing = null;
 let _targetEnemy = null;
+let _targetCross = null;
 
-function createTargetRing() {
-  const geo = new THREE.RingGeometry(0.5, 0.6, 24);
-  geo.rotateX(-Math.PI / 2);
-  const mat = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthTest: false });
-  _targetRing = new THREE.Mesh(geo, mat);
-  _targetRing.renderOrder = 998;
-  _targetRing.visible = false;
-  world.scene.add(_targetRing);
+// Line-of-sight check: walk grid from (x0,z0) to (x1,z1), return true if no wall blocks
+function hasLineOfSight(x0, z0, x1, z1) {
+  const dx = x1 - x0, dz = z1 - z0;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  const steps = Math.ceil(dist / (TILE * 0.4));
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const x = x0 + dx * t, z = z0 + dz * t;
+    const c = Math.floor(x / TILE), r = Math.floor(z / TILE);
+    if (c < 0 || c >= MAP_W || r < 0 || r >= MAP_H) return false;
+    if (GRID[r][c] === 1) return false;
+  }
+  return true;
+}
+
+function createTargetSight() {
+  // Crosshair sight at enemy - vertical ring facing camera
+  const rGeo = new THREE.RingGeometry(0.4, 0.55, 24);
+  const rMat = new THREE.MeshBasicMaterial({
+    color: 0x00ff66, transparent: true, opacity: 0.7,
+    side: THREE.DoubleSide, depthTest: false
+  });
+  _targetCross = new THREE.Mesh(rGeo, rMat);
+  _targetCross.renderOrder = 999;
+  _targetCross.visible = false;
+  // Add inner cross lines
+  const crossGeo = new THREE.BufferGeometry();
+  const cv = new Float32Array([
+    -0.55,0,0, -0.2,0,0,  0.2,0,0, 0.55,0,0,
+    0,-0.55,0, 0,-0.2,0,  0,0.2,0, 0,0.55,0
+  ]);
+  crossGeo.setAttribute('position', new THREE.Float32BufferAttribute(cv, 3));
+  const crossMat = new THREE.LineBasicMaterial({ color: 0x00ff66, transparent: true, opacity: 0.7, depthTest: false });
+  const crossLines = new THREE.LineSegments(crossGeo, crossMat);
+  crossLines.renderOrder = 999;
+  _targetCross.add(crossLines);
+  _targetCross._crossMat = crossMat;
+  world.scene.add(_targetCross);
 }
 
 function updateAim() {
@@ -1661,7 +1677,7 @@ function updateAim() {
   _ray.ray.intersectPlane(_gndPlane, _aimTarget);
 
   // Find enemy closest to aim line
-  if (!_targetRing && world.scene) createTargetRing();
+  if (!_targetCross && world.scene) createTargetSight();
   _targetEnemy = null;
   let bestScore = Infinity;
   const aimDir = _aimTarget.clone().sub(player.pos).normalize();
@@ -1670,8 +1686,7 @@ function updateAim() {
     if (e.isDead || !e.root) continue;
     const toE = e.pos.clone().sub(player.pos);
     const dot = toE.dot(aimDir);
-    if (dot < 0.5) continue; // behind player or too close
-    // Perpendicular distance to aim line
+    if (dot < 0.5) continue;
     const proj = aimDir.clone().multiplyScalar(dot);
     const perp = toE.clone().sub(proj).length();
     if (perp < 1.5 && dot < bestScore) {
@@ -1680,17 +1695,25 @@ function updateAim() {
     }
   }
 
-  if (_targetRing) {
+  if (_targetCross) {
     if (_targetEnemy) {
-      _targetRing.visible = true;
-      _targetRing.position.set(_targetEnemy.pos.x, 0.05, _targetEnemy.pos.z);
-      // Pulse effect
+      const los = hasLineOfSight(player.pos.x, player.pos.z, _targetEnemy.pos.x, _targetEnemy.pos.z);
+      const color = los ? 0x00ff66 : 0xff3333;
       const t = performance.now() * 0.004;
-      const s = 1.0 + Math.sin(t) * 0.15;
-      _targetRing.scale.set(s, 1, s);
-      _targetRing.material.opacity = 0.4 + Math.sin(t) * 0.2;
+
+      // Crosshair sight on enemy (at chest height, facing camera)
+      const eY = (_targetEnemy.root && _targetEnemy.root._groundY != null) ? _targetEnemy.root._groundY : 0;
+      _targetCross.position.set(_targetEnemy.pos.x, eY + 1.0, _targetEnemy.pos.z);
+      _targetCross.lookAt(world.camera.position);
+      _targetCross.material.color.setHex(color);
+      if (_targetCross._crossMat) _targetCross._crossMat.color.setHex(color);
+      const s = 1.0 + Math.sin(t) * 0.1;
+      _targetCross.scale.set(s, s, s);
+      _targetCross.material.opacity = los ? (0.5 + Math.sin(t) * 0.15) : 0.2;
+      if (_targetCross._crossMat) _targetCross._crossMat.opacity = _targetCross.material.opacity;
+      _targetCross.visible = true;
     } else {
-      _targetRing.visible = false;
+      _targetCross.visible = false;
     }
   }
 }
@@ -1913,7 +1936,7 @@ function explodeGrenade(g) {
   const ep = g.pos.clone().setY(0.5);
   spawnExplosion(ep);
   audio.sfx_explosion();
-  gs.camShake = Math.max(gs.camShake, 0.5);
+  gs.camShake = Math.max(gs.camShake, 0.3);
 
   // Flash light
   const fl = new THREE.PointLight(0xff6600, 8, 12);
@@ -1973,7 +1996,7 @@ function updateGrenades(dt) {
       g.vel.x *= 0.75;  // ground friction
       g.vel.z *= 0.75;
       g.bounces++;
-      audio.sfx_grenadeBounce();
+      if (Math.abs(g.vel.y) > 1.5) audio.sfx_grenadeBounce();
     }
 
     // Wall bounce
@@ -2075,7 +2098,7 @@ function damagePlayer(amount, srcPos) {
   player.hp = Math.max(0, player.hp - amount);
   player.isInvulnerable = true;
   player.invulTimer     = 0.4;
-  gs.camShake = 0.3;
+  gs.camShake = 0.15;
   audio.sfx_playerHit();
   screenFlash('rgba(220,40,40,0.4)');
   floatNumber(player.pos.clone().setY(2.2), `-${amount}`, false);
@@ -2110,7 +2133,7 @@ function explodeBarrel(barrel) {
   world.scene.remove(barrel.mesh);
   spawnExplosion(barrel.pos.clone().setY(1));
   audio.sfx_explosion();
-  gs.camShake = 0.7;
+  gs.camShake = 0.35;
 
   // Flash light
   const fl = new THREE.PointLight(0xff6600, 10, 14);
@@ -2244,9 +2267,13 @@ function updateEnemies(dt) {
       e.gunMesh.rotation.y = e.facing;
     }
 
-    // Animation
+    // Animation — check actual movement, not just state
     if (e.mixers) {
-      const moving = e.state !== 'attack' && e.state !== 'patrol';
+      const dx = e.pos.x - (e._prevX || e.pos.x);
+      const dz = e.pos.z - (e._prevZ || e.pos.z);
+      const moving = (dx * dx + dz * dz) > 0.0001 * dt * dt;
+      e._prevX = e.pos.x;
+      e._prevZ = e.pos.z;
       setAnim(e, moving ? 'run' : 'idle');
     }
     if (e.root) { e.root.position.x = e.pos.x; e.root.position.y = e.root._groundY || 0; e.root.position.z = e.pos.z; }
@@ -2448,19 +2475,95 @@ function updatePlayer(dt) {
 //  CAMERA
 // ============================================================
 function updateCamera(dt) {
-  world.cameraTarget.lerp(player.pos, 0.12);
+  world.cameraTarget.lerp(player.pos, 0.25);
   world.camOffset.copy(world.camBaseOffset).multiplyScalar(world.camZoom);
   const target = player.pos.clone().add(world.camOffset);
-  world.camera.position.lerp(target, 0.1);
+  world.camera.position.lerp(target, 0.2);
 
   if (gs.camShake > 0) {
-    gs.camShake -= dt * 3;
+    gs.camShake -= dt * 5;
     const s = Math.max(0, gs.camShake);
-    world.camera.position.x += (Math.random()-0.5) * s * 0.5;
-    world.camera.position.y += (Math.random()-0.5) * s * 0.25;
+    world.camera.position.x += (Math.random()-0.5) * s * 0.25;
+    world.camera.position.y += (Math.random()-0.5) * s * 0.12;
     world.camera.position.z += (Math.random()-0.5) * s * 0.5;
   }
   world.camera.lookAt(world.cameraTarget.x, 0.5, world.cameraTarget.z);
+}
+
+// ============================================================
+//  OCCLUSION — outline when characters hidden behind walls
+// ============================================================
+const _playerOutlineMat = new THREE.MeshBasicMaterial({
+  color: 0x55aaff, transparent: true, opacity: 0.3, depthTest: false
+});
+const _enemyOutlineMat = new THREE.MeshBasicMaterial({
+  color: 0xff6644, transparent: true, opacity: 0.3, depthTest: false
+});
+let _playerOrigMats = null;
+let _playerOccluded = false;
+
+function isBehindWall(tx, ty, tz) {
+  const camPos = world.camera.position;
+  const dir = new THREE.Vector3(tx - camPos.x, ty - camPos.y, tz - camPos.z);
+  const dist = dir.length();
+  dir.normalize();
+  for (let d = 0; d < dist - 0.5; d += 0.5) {
+    const px = camPos.x + dir.x * d;
+    const py = camPos.y + dir.y * d;
+    const pz = camPos.z + dir.z * d;
+    if (py < 0 || py > 3.2) continue;
+    const c = Math.floor(px / TILE), r = Math.floor(pz / TILE);
+    if (c < 0 || c >= MAP_W || r < 0 || r >= MAP_H) continue;
+    if (GRID[r][c] === 1) return true;
+  }
+  return false;
+}
+
+function setOutline(root, extraRoot, origMap, mat) {
+  root.traverse(ch => {
+    if (ch.isMesh) { origMap.set(ch, ch.material); ch.material = mat; ch.renderOrder = 900; }
+  });
+  if (extraRoot) extraRoot.traverse(ch => {
+    if (ch.isMesh) { origMap.set(ch, ch.material); ch.material = mat; }
+  });
+}
+
+function clearOutline(origMap, extraRoot) {
+  if (origMap) origMap.forEach((mat, mesh) => { mesh.material = mat; mesh.renderOrder = 0; });
+  if (extraRoot) extraRoot.traverse(ch => { if (ch.isMesh) ch.renderOrder = 999; });
+}
+
+function updateOcclusion() {
+  // Player
+  if (player.root) {
+    const occ = isBehindWall(player.pos.x, 1.0, player.pos.z);
+    if (occ && !_playerOccluded) {
+      _playerOrigMats = new Map();
+      setOutline(player.root, player.gunMesh, _playerOrigMats, _playerOutlineMat);
+      _playerOccluded = true;
+    } else if (!occ && _playerOccluded) {
+      clearOutline(_playerOrigMats, player.gunMesh);
+      _playerOrigMats = null;
+      _playerOccluded = false;
+    }
+  }
+  // Enemies
+  for (const e of world.enemies) {
+    if (!e.root || e.isDead) {
+      if (e._occluded) { clearOutline(e._origMats, null); e._origMats = null; e._occluded = false; }
+      continue;
+    }
+    const occ = isBehindWall(e.pos.x, 1.0, e.pos.z);
+    if (occ && !e._occluded) {
+      e._origMats = new Map();
+      setOutline(e.root, null, e._origMats, _enemyOutlineMat);
+      e._occluded = true;
+    } else if (!occ && e._occluded) {
+      clearOutline(e._origMats, null);
+      e._origMats = null;
+      e._occluded = false;
+    }
+  }
 }
 
 // ============================================================
@@ -2469,8 +2572,8 @@ function updateCamera(dt) {
 function updateTorches(t) {
   for (const torch of world.torches) {
     const f = 1.0
-      + Math.sin(t * 8.3  + torch.phase)     * 0.30
-      + Math.sin(t * 13.7 + torch.phase*2.3) * 0.15;
+      + Math.sin(t * 4.0  + torch.phase)     * 0.12
+      + Math.sin(t * 6.5  + torch.phase*2.3) * 0.06;
     torch.light.intensity = torch.baseIntensity * f;
     if (torch.flame) {
       torch.flame.position.y = 2.35 + Math.sin(t * 11 + torch.phase) * 0.04;
@@ -2802,6 +2905,7 @@ const ASSET_PATHS = [
   'assets/toonshooter/Guns/glTF/Pistol.gltf',
   'assets/toonshooter/Guns/glTF/SMG.gltf',
   'assets/toonshooter/Guns/glTF/Shotgun.gltf',
+  'assets/toonshooter/Guns/glTF/Grenade.gltf',
   'assets/toonshooter/Environment/glTF/Key.gltf',
   'assets/toonshooter/Environment/glTF/Crate.gltf',
   'assets/toonshooter/Environment/glTF/ExplodingBarrel.gltf',
@@ -2867,7 +2971,7 @@ async function resetGame() {
   }
   world.mixers      = [];
   world.walls       = [];
-  _targetRing = null; _targetEnemy = null;
+  _targetEnemy = null; _targetCross = null;
   world.torches     = [];
   world.bullets     = [];
   world.eBullets    = [];
@@ -2961,6 +3065,7 @@ function loop() {
   updatePickups(dt);
   updateTorches(time);
   updateCamera(dt);
+  updateOcclusion();
   drawMinimap();
 
   world.renderer.render(world.scene, world.camera);
