@@ -1925,6 +1925,19 @@ function killPlayer() {
   audio.sfx_playerDeath();
   audio.stopMusic(1.5);
   if (player.mixers) setAnim(player, 'death');
+  // Gradually tilt player to lay down on the ground
+  if (player.root) {
+    const start = performance.now();
+    const dur = 800; // ms to fall over
+    const tick = () => {
+      const t = Math.min((performance.now() - start) / dur, 1);
+      const ease = t * t; // ease-in
+      player.root.rotation.x = ease * (-Math.PI / 2); // face down
+      player.root.position.y = player.root.position.y * (1 - ease * 0.5);
+      if (t < 1) requestAnimationFrame(tick);
+    };
+    setTimeout(tick, 400); // start falling after death anim begins
+  }
   setTimeout(() => showMenu('deathMenu'), 2000);
 }
 
@@ -2057,6 +2070,7 @@ function enemyFire(e) {
   spawnBullet(origin, dir, WEAPON_DEFS.Pistol.damage, 'enemy');
   spawnMuzzleFlash(origin);
   spawnTracer(origin, origin.clone().add(dir.clone().multiplyScalar(16)));
+  audio.sfx_pistol();
 }
 
 // ============================================================
