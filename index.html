@@ -467,9 +467,6 @@
     V &mdash; Toggle Visuals &nbsp;|&nbsp; Esc &mdash; Pause
   </div>
   <button class="menu-btn" id="btnStart">ENTER DUNGEON</button>
-  <div class="toggle-row">
-    <label><input type="checkbox" id="chkPlaceholders"> Use placeholders (fast load)</label>
-  </div>
 </div>
 
 <div class="menu-overlay" id="pauseMenu" style="display:none">
@@ -744,7 +741,7 @@ class DungeonAudio {
       chest_open:     { file: 'lock-open.ogg',                 volume: 0.7  },
       bullet_impact:  { file: 'foley-bullet-hit-metal.wav',     volume: 0.4  },
       dungeon_ambient:{ file: 'dungeon-ambience-1.ogg',        volume: 0.3 },
-      dungeon_bgm:    { file: 'fast_fight.wav',                 volume: 0.35 },
+      dungeon_bgm:    { file: 'boss_battle.mp3',                volume: 0.35 },
     };
   }
 
@@ -3441,7 +3438,7 @@ function elById(id) { return document.getElementById(id); }
 function wireButtons() {
   elById('btnStart').addEventListener('click', async () => {
     await audio.init();
-    settings.usePlaceholders = elById('chkPlaceholders').checked;
+    settings.usePlaceholders = false;
     showMenu('startMenu'); // keep visible during load
     elById('startMenu').style.display = 'none';
     await loadAllAssets();
