@@ -107,6 +107,30 @@
       animation: blink 0.5s infinite alternate;
     }
     @keyframes blink { from { opacity:1; } to { opacity:0.3; } }
+    #inventoryBar {
+      position: absolute;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 4px;
+      pointer-events: none;
+    }
+    .inv-slot {
+      background: rgba(0,0,0,0.6);
+      border: 2px solid rgba(255,255,255,0.15);
+      border-radius: 4px;
+      padding: 4px 10px;
+      text-align: center;
+      min-width: 70px;
+      opacity: 0.5;
+      transition: opacity 0.15s, border-color 0.15s;
+    }
+    .inv-slot.active { opacity: 1; border-color: var(--torch); background: rgba(80,50,20,0.7); }
+    .inv-slot.locked { opacity: 0.25; }
+    .inv-key   { display: block; font-family: 'Bangers', cursive; font-size: 11px; color: #888; }
+    .inv-name  { display: block; font-family: 'Bangers', cursive; font-size: 14px; color: #e8dcc8; }
+    .inv-ammo  { display: block; font-size: 12px; color: #aaa; }
     #objectives {
       position: absolute;
       bottom: 16px; right: 16px;
@@ -320,7 +344,12 @@
     <div id="weaponName">PISTOL</div>
     <div id="ammoCount">8 <span>/ 24</span></div>
     <div id="reloadPrompt" style="display:none">RELOAD [R]</div>
-    <div id="grenadeHUD" style="margin-top:4px;font-size:13px;color:#90ee90;">GRENADES: 2</div>
+  </div>
+  <div id="inventoryBar">
+    <div class="inv-slot active" id="inv-Pistol"><span class="inv-key">1</span><span class="inv-name">PISTOL</span><span class="inv-ammo">8/24</span></div>
+    <div class="inv-slot locked" id="inv-SMG"><span class="inv-key">2</span><span class="inv-name">SMG</span><span class="inv-ammo">--</span></div>
+    <div class="inv-slot locked" id="inv-Shotgun"><span class="inv-key">3</span><span class="inv-name">SHOTGUN</span><span class="inv-ammo">--</span></div>
+    <div class="inv-slot inv-grenade" id="inv-Grenade"><span class="inv-key">RMB</span><span class="inv-name">GRENADE</span><span class="inv-ammo">2</span></div>
   </div>
   <canvas id="minimap" width="180" height="180"></canvas>
   <div id="objectives">
@@ -427,7 +456,7 @@ const WEAPON_DEFS = {
 // ============================================================
 //  DUNGEON GRID
 //  0=floor 1=wall 2=player_spawn 3=enemy_spawn
-//  4=key   5=chest 6=health 7=SMG 8=shotgun
+//  4=key   5=chest 6=health 7=SMG 8=shotgun 9=grenade
 // ============================================================
 const GRID = [
   [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
@@ -438,16 +467,16 @@ const GRID = [
   [1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1],
   [1,1,0,1,1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,1,1,1],
   [1,1,0,1,1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,1,1,1],
-  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,9,0,0,0,0,0,0,0,0,1],
   [1,0,0,0,0,0,1,0,0,0,3,0,1,0,0,0,0,0,1,0,0,0,0,1],
   [1,0,0,0,6,0,1,0,0,0,0,0,1,0,0,6,0,0,1,0,0,0,0,1],
-  [1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1],
+  [1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,9,1],
   [1,1,0,1,1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,1,1,1],
   [1,1,0,1,1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,1,1,1,1,1],
   [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
   [1,0,0,0,0,0,1,0,0,0,0,0,1,0,3,0,0,0,1,0,5,0,0,1],
   [1,0,0,0,0,0,1,0,0,0,8,0,1,0,0,0,0,0,1,0,0,0,0,1],
-  [1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,6,0,1,0,0,0,0,1],
+  [1,0,0,0,9,0,1,0,0,0,0,0,1,0,0,0,6,0,1,0,0,0,0,1],
   [1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1],
   [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
 ];
@@ -1217,6 +1246,7 @@ async function buildPickups() {
     6: { type:'health',       path:'assets/toonshooter/Environment/glTF/Health.gltf',  h:0.5, color:0x44ff66 },
     7: { type:'weapon_SMG',   path:'assets/toonshooter/Guns/glTF/SMG.gltf',            h:0.4, color:0x66aaff },
     8: { type:'weapon_Shotgun',path:'assets/toonshooter/Guns/glTF/Shotgun.gltf',       h:0.4, color:0xff8844 },
+    9: { type:'grenade',      path:'assets/toonshooter/Guns/glTF/Grenade.gltf',      h:0.3, color:0x33ff33 },
   };
 
   for (let r = 0; r < MAP_H; r++) {
@@ -1335,7 +1365,9 @@ async function buildPlayer() {
   const cloned = cloneAsset(path);
   if (cloned) {
     normalizeToHeight(cloned.root, 1.7);
-    cloned.root.position.copy(player.pos);
+    const groundY = cloned.root.position.y;
+    cloned.root.position.set(player.pos.x, groundY, player.pos.z);
+    cloned.root._groundY = groundY;
     world.scene.add(cloned.root);
     player.root   = cloned.root;
     player.mixers = setupAnims(cloned.root, cloned.animations);
@@ -1400,7 +1432,9 @@ function spawnEnemy(charPath, gunPath, pos, waypoints) {
 
   if (cloned) {
     normalizeToHeight(cloned.root, 1.7);
-    cloned.root.position.copy(pos);
+    const groundY = cloned.root.position.y; // Y offset from normalizeToHeight
+    cloned.root.position.set(pos.x, groundY, pos.z);
+    cloned.root._groundY = groundY; // store for later
     world.scene.add(cloned.root);
     root   = cloned.root;
     mixers = setupAnims(cloned.root, cloned.animations);
@@ -1507,7 +1541,23 @@ function initInput() {
   });
   window.addEventListener('wheel', e => {
     e.preventDefault();
-    world.camZoom = Math.max(world.camZoomMin, Math.min(world.camZoomMax, world.camZoom + e.deltaY * 0.001));
+    if (e.shiftKey) {
+      // Shift+scroll = camera zoom
+      world.camZoom = Math.max(world.camZoomMin, Math.min(world.camZoomMax, world.camZoom + e.deltaY * 0.001));
+    } else if (gs.phase === 'playing') {
+      // Scroll = switch weapon
+      const WEAPONS = ['Pistol', 'SMG', 'Shotgun'];
+      const curIdx = WEAPONS.indexOf(player.weapon);
+      const dir = e.deltaY > 0 ? 1 : -1;
+      for (let i = 1; i <= WEAPONS.length; i++) {
+        const idx = (curIdx + dir * i + WEAPONS.length) % WEAPONS.length;
+        const w = WEAPONS[idx];
+        if (w === 'Pistol' || player.guns[w].mag > 0 || player.guns[w].reserve > 0) {
+          trySwitch(w);
+          break;
+        }
+      }
+    }
   }, { passive: false });
 }
 
@@ -1569,6 +1619,9 @@ function tryShoot() {
     spawnTracer(origin.clone(), origin.clone().add(dir.clone().multiplyScalar(20)));
   }
   updateWeaponHUD();
+  updateInventoryHUD();
+  // Auto-reload when mag empties
+  if (ammo.mag === 0 && ammo.reserve > 0) setTimeout(startReload, 300);
 }
 
 function startReload() {
@@ -1596,6 +1649,7 @@ function finishReload() {
   if (player.mixers) setAnim(player, 'idle');
   elById('reloadPrompt').style.display = 'none';
   updateWeaponHUD();
+  updateInventoryHUD();
 }
 
 async function trySwitch(name) {
@@ -1607,6 +1661,7 @@ async function trySwitch(name) {
   elById('reloadPrompt').style.display = 'none';
   await attachGun();
   updateWeaponHUD();
+  updateInventoryHUD();
 }
 
 // ============================================================
@@ -2072,7 +2127,7 @@ function updateEnemies(dt) {
       const moving = e.state !== 'attack' && e.state !== 'patrol';
       setAnim(e, moving ? 'run' : 'idle');
     }
-    if (e.root) { e.root.position.x = e.pos.x; e.root.position.z = e.pos.z; }
+    if (e.root) { e.root.position.x = e.pos.x; e.root.position.y = e.root._groundY || 0; e.root.position.z = e.pos.z; }
   }
 }
 
@@ -2171,7 +2226,13 @@ function collectPickup(pk) {
     player.guns.Shotgun.reserve = WEAPON_DEFS.Shotgun.reserve;
     trySwitch('Shotgun');
     showNotification('Shotgun obtained!');
+  } else if (pk.type === 'grenade') {
+    audio.sfx_pickupWeapon();
+    player.grenadeCount += 3;
+    showNotification('+3 Grenades');
+    updateGrenadeHUD();
   }
+  updateInventoryHUD();
 }
 
 // ============================================================
@@ -2244,6 +2305,7 @@ function updatePlayer(dt) {
 
   if (player.root) {
     player.root.position.x = player.pos.x;
+    if (!player.isDead) player.root.position.y = player.root._groundY || 0;
     player.root.position.z = player.pos.z;
     player.root.rotation.y = player.facing;
   }
@@ -2404,10 +2466,24 @@ function updateWeaponHUD() {
 }
 
 function updateGrenadeHUD() {
-  const el = elById('grenadeHUD');
-  if (el) {
-    el.textContent = `GRENADES: ${player.grenadeCount}`;
-    el.style.color = player.grenadeCount > 0 ? '#90ee90' : '#ff4d4d';
+  updateInventoryHUD();
+}
+
+function updateInventoryHUD() {
+  const WEAPONS = ['Pistol', 'SMG', 'Shotgun'];
+  for (const w of WEAPONS) {
+    const el = elById('inv-' + w);
+    if (!el) continue;
+    const g = player.guns[w];
+    const hasGun = w === 'Pistol' || g.mag > 0 || g.reserve > 0;
+    el.classList.toggle('active', player.weapon === w);
+    el.classList.toggle('locked', !hasGun);
+    el.querySelector('.inv-ammo').textContent = hasGun ? `${g.mag}/${g.reserve}` : '--';
+  }
+  const grenEl = elById('inv-Grenade');
+  if (grenEl) {
+    grenEl.querySelector('.inv-ammo').textContent = String(player.grenadeCount);
+    grenEl.classList.toggle('locked', player.grenadeCount <= 0);
   }
 }
 
@@ -2636,6 +2712,7 @@ async function resetGame() {
   initHealthHUD();
   updateHealthHUD();
   updateWeaponHUD();
+  updateInventoryHUD();
   updateObjectivesHUD();
   elById('reloadPrompt').style.display = 'none';
 
