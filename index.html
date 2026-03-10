@@ -1589,7 +1589,7 @@ function initInput() {
     if (gs.phase === 'playing') {
       if (e.code === 'KeyR')   startReload();
       if (e.code === 'KeyV')   toggleVisuals();
-      if (e.code === 'Escape') pauseGame();
+      if (e.code === 'Escape') { if (_invOpen) toggleInventory(); else pauseGame(); }
       if (e.code === 'Tab' || e.code === 'KeyI') { e.preventDefault(); toggleInventory(); }
       if (e.code === 'Digit1') trySwitch('Pistol');
       if (e.code === 'Digit2') trySwitch('SMG');
@@ -1602,6 +1602,7 @@ function initInput() {
   });
   window.addEventListener('keyup',  e => { delete input.keys[e.code]; });
   window.addEventListener('mousedown', e => {
+    if (_invOpen) return; // Don't shoot while inventory is open
     if (e.button === 0) input.mouseBtn = true;
     if (e.button === 2 && gs.phase === 'playing') tryThrowGrenade();
   });
