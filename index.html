@@ -748,6 +748,10 @@ const world = {
   pickups:     [],
   cameraTarget: new THREE.Vector3(),
   camOffset:    new THREE.Vector3(12, 20, 12),
+  camZoom:      1.0,
+  camZoomMin:   0.5,
+  camZoomMax:   2.0,
+  camBaseOffset:new THREE.Vector3(12, 20, 12),
 };
 
 const player = {
@@ -1469,6 +1473,10 @@ function initInput() {
     input.mousePos.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
     input.mousePos.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
   });
+  window.addEventListener('wheel', e => {
+    e.preventDefault();
+    world.camZoom = Math.max(world.camZoomMin, Math.min(world.camZoomMax, world.camZoom + e.deltaY * 0.001));
+  }, { passive: false });
 }
 
 // ============================================================
@@ -2225,6 +2233,7 @@ function updatePlayer(dt) {
 // ============================================================
 function updateCamera(dt) {
   world.cameraTarget.lerp(player.pos, 0.12);
+  world.camOffset.copy(world.camBaseOffset).multiplyScalar(world.camZoom);
   const target = player.pos.clone().add(world.camOffset);
   world.camera.position.lerp(target, 0.1);
 
