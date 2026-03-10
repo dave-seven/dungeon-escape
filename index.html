@@ -969,8 +969,7 @@ const gs = {
 // ============================================================
 async function loadGltf(path) {
   if (assets.cache.has(path)) return assets.cache.get(path);
-  const url = (path.startsWith('http') || path.startsWith('/') || path.startsWith('../'))
-    ? path : `../${path}`;
+  const url = path;
   const loader = new GLTFLoader();
   const entry = await new Promise(resolve => {
     loader.load(url, gltf => {
