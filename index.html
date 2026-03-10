@@ -744,7 +744,7 @@ class DungeonAudio {
       chest_open:     { file: 'lock-open.ogg',                 volume: 0.7  },
       bullet_impact:  { file: 'foley-bullet-hit-metal.wav',     volume: 0.4  },
       dungeon_ambient:{ file: 'dungeon-ambience-1.ogg',        volume: 0.3 },
-      dungeon_bgm:    { file: 'boss_battle.mp3',                volume: 0.35 },
+      dungeon_bgm:    { file: 'fast_fight.wav',                 volume: 0.35 },
     };
   }
 
@@ -3204,12 +3204,14 @@ function pauseGame() {
   if (gs.phase !== 'playing') return;
   gs.phase = 'paused';
   world.clock.stop();
+  if (audio.ctx) audio.musicGain.gain.setValueAtTime(0, audio.ctx.currentTime);
   showMenu('pauseMenu');
 }
 
 function resumeGame() {
   gs.phase = 'playing';
   world.clock.start();
+  if (audio.ctx) audio.musicGain.gain.setValueAtTime(audio._manifest.dungeon_bgm.volume, audio.ctx.currentTime);
   hideMenus();
   if (settings.viewMode === 'fps') {
     document.getElementById('gameCanvas').requestPointerLock();
