@@ -918,7 +918,7 @@ const gs = {
 async function loadGltf(path) {
   if (assets.cache.has(path)) return assets.cache.get(path);
   const url = (path.startsWith('http') || path.startsWith('/') || path.startsWith('../'))
-    ? path : path;
+    ? path : `../${path}`;
   const loader = new GLTFLoader();
   const entry = await new Promise(resolve => {
     loader.load(url, gltf => {
@@ -1643,9 +1643,56 @@ const _ray        = new THREE.Raycaster();
 const _gndPlane   = new THREE.Plane(new THREE.Vector3(0,1,0), -1.0);
 const _aimTarget  = new THREE.Vector3();
 
+let _targetRing = null;
+let _targetEnemy = null;
+
+function createTargetRing() {
+  const geo = new THREE.RingGeometry(0.5, 0.6, 24);
+  geo.rotateX(-Math.PI / 2);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff3333, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthTest: false });
+  _targetRing = new THREE.Mesh(geo, mat);
+  _targetRing.renderOrder = 998;
+  _targetRing.visible = false;
+  world.scene.add(_targetRing);
+}
+
 function updateAim() {
   _ray.setFromCamera(input.mousePos, world.camera);
   _ray.ray.intersectPlane(_gndPlane, _aimTarget);
+
+  // Find enemy closest to aim line
+  if (!_targetRing && world.scene) createTargetRing();
+  _targetEnemy = null;
+  let bestScore = Infinity;
+  const aimDir = _aimTarget.clone().sub(player.pos).normalize();
+
+  for (const e of world.enemies) {
+    if (e.isDead || !e.root) continue;
+    const toE = e.pos.clone().sub(player.pos);
+    const dot = toE.dot(aimDir);
+    if (dot < 0.5) continue; // behind player or too close
+    // Perpendicular distance to aim line
+    const proj = aimDir.clone().multiplyScalar(dot);
+    const perp = toE.clone().sub(proj).length();
+    if (perp < 1.5 && dot < bestScore) {
+      bestScore = dot;
+      _targetEnemy = e;
+    }
+  }
+
+  if (_targetRing) {
+    if (_targetEnemy) {
+      _targetRing.visible = true;
+      _targetRing.position.set(_targetEnemy.pos.x, 0.05, _targetEnemy.pos.z);
+      // Pulse effect
+      const t = performance.now() * 0.004;
+      const s = 1.0 + Math.sin(t) * 0.15;
+      _targetRing.scale.set(s, 1, s);
+      _targetRing.material.opacity = 0.4 + Math.sin(t) * 0.2;
+    } else {
+      _targetRing.visible = false;
+    }
+  }
 }
 
 // ============================================================
@@ -2820,6 +2867,7 @@ async function resetGame() {
   }
   world.mixers      = [];
   world.walls       = [];
+  _targetRing = null; _targetEnemy = null;
   world.torches     = [];
   world.bullets     = [];
   world.eBullets    = [];
