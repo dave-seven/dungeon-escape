@@ -332,7 +332,22 @@
       text-align: center;
       line-height: 1.8;
     }
-    #crosshair { display: none; }
+    #crosshair {
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 14px; height: 14px;
+      transform: translate(-50%,-50%);
+      pointer-events: none;
+      z-index: 12;
+      display: none;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255,255,255,0.8);
+    }
+    #crosshair::before { width: 14px; height: 2px; top: 6px; left: 0; }
+    #crosshair::after  { width: 2px; height: 14px; top: 0; left: 6px; }
     #notification {
       position: absolute;
       top: 50%; left: 50%;
@@ -458,7 +473,13 @@
 <div class="menu-overlay" id="pauseMenu" style="display:none">
   <div style="font-family:'Bangers',cursive;font-size:52px;color:#e8dcc8;letter-spacing:0.1em">PAUSED</div>
   <div class="toggle-row">
-    <label><input type="checkbox" id="chkTopDown"> Top-down view (F)</label>
+    <label>View Mode (F):
+      <select id="selViewMode" style="background:#333;color:#ddd;border:1px solid #555;padding:4px 8px;font-family:inherit;cursor:pointer">
+        <option value="iso">Isometric</option>
+        <option value="topdown">Top-Down</option>
+        <option value="fps">FPS</option>
+      </select>
+    </label>
   </div>
   <button class="menu-btn" id="btnResume">RESUME</button>
   <button class="menu-btn secondary" id="btnRestart">RESTART</button>
@@ -870,7 +891,7 @@ const audio = new DungeonAudio();
 //  GLOBAL STATE
 // ============================================================
 const assets   = { cache: new Map() };
-const settings = { usePlaceholders: false, topDown: false };
+const settings = { usePlaceholders: false, viewMode: 'iso' }; // 'iso', 'topdown', 'fps'
 const input    = { keys: {}, mouseBtn: false, mousePos: new THREE.Vector2() };
 
 const world = {
@@ -1494,7 +1515,11 @@ async function buildPlayer() {
 }
 
 async function attachGun() {
-  if (player.gunMesh) { world.scene.remove(player.gunMesh); player.gunMesh = null; }
+  if (player.gunMesh) {
+    world.scene.remove(player.gunMesh);
+    if (world.fpsCam) world.fpsCam.remove(player.gunMesh);
+    player.gunMesh = null;
+  }
   const paths = {
     Pistol:  'assets/toonshooter/Guns/glTF/Pistol.gltf',
     SMG:     'assets/toonshooter/Guns/glTF/SMG.gltf',
@@ -1519,6 +1544,8 @@ async function attachGun() {
     world.scene.add(mesh);
     player.gunMesh = mesh;
   }
+  // If in FPS mode, reparent to camera
+  if (settings.viewMode === 'fps') updateGunAttachment();
 }
 
 // ============================================================
@@ -1621,6 +1648,10 @@ function initRenderer() {
   world.orthoCam = orthoCam;
   world.orthoSize = orthoSize;
 
+  // FPS camera
+  const fpsCam = new THREE.PerspectiveCamera(75, 16 / 9, 0.05, 80);
+  world.fpsCam = fpsCam;
+
   function resize() {
     const w = wrap.clientWidth;
     const h = wrap.clientHeight;
@@ -1628,6 +1659,8 @@ function initRenderer() {
     const a = w / h;
     cam.aspect = a;
     cam.updateProjectionMatrix();
+    fpsCam.aspect = a;
+    fpsCam.updateProjectionMatrix();
     const sz = world.orthoSize;
     orthoCam.left   = -sz * a;
     orthoCam.right  =  sz * a;
@@ -1670,10 +1703,20 @@ function initInput() {
   window.addEventListener('mouseup',   e => { if (e.button === 0) input.mouseBtn = false; });
   window.addEventListener('contextmenu', e => e.preventDefault());
   window.addEventListener('mousemove', e => {
-    const wrap = document.getElementById('canvasWrap');
-    const rect = wrap.getBoundingClientRect();
-    input.mousePos.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
-    input.mousePos.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+    if (settings.viewMode === 'fps' && document.pointerLockElement) {
+      // FPS mouse look
+      const sens = 0.002;
+      _fpsYaw   -= e.movementX * sens;
+      _fpsPitch -= e.movementY * sens;
+      _fpsPitch  = Math.max(-Math.PI/2 + 0.05, Math.min(Math.PI/2 - 0.05, _fpsPitch));
+      // Keep mousePos at center for raycaster compatibility
+      input.mousePos.set(0, 0);
+    } else {
+      const wrap = document.getElementById('canvasWrap');
+      const rect = wrap.getBoundingClientRect();
+      input.mousePos.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+      input.mousePos.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+    }
   });
   window.addEventListener('wheel', e => {
     e.preventDefault();
@@ -1695,6 +1738,21 @@ function initInput() {
       }
     }
   }, { passive: false });
+
+  // Handle pointer lock exit (Esc in FPS mode)
+  document.addEventListener('pointerlockchange', () => {
+    if (!document.pointerLockElement && settings.viewMode === 'fps') {
+      // Pointer lock lost while in FPS — pause the game
+      if (gs.phase === 'playing') pauseGame();
+    }
+  });
+
+  // Re-lock pointer when resuming game in FPS mode
+  document.addEventListener('click', () => {
+    if (settings.viewMode === 'fps' && gs.phase === 'playing' && !document.pointerLockElement) {
+      document.getElementById('gameCanvas').requestPointerLock();
+    }
+  });
 }
 
 // ============================================================
@@ -1748,8 +1806,11 @@ function createTargetSight() {
 }
 
 function updateAim() {
-  _ray.setFromCamera(input.mousePos, world.camera);
-  _ray.ray.intersectPlane(_gndPlane, _aimTarget);
+  if (settings.viewMode !== 'fps') {
+    _ray.setFromCamera(input.mousePos, world.camera);
+    _ray.ray.intersectPlane(_gndPlane, _aimTarget);
+  }
+  // In FPS mode, _aimTarget is already set by updateCamera
 
   // Find enemy closest to aim line
   if (!_targetCross && world.scene) createTargetSight();
@@ -1771,7 +1832,7 @@ function updateAim() {
   }
 
   if (_targetCross) {
-    if (_targetEnemy) {
+    if (_targetEnemy && settings.viewMode !== 'fps') {
       const los = hasLineOfSight(player.pos.x, player.pos.z, _targetEnemy.pos.x, _targetEnemy.pos.z);
       const color = los ? 0x00ff66 : 0xff3333;
       const t = performance.now() * 0.004;
@@ -2539,8 +2600,12 @@ function updatePlayer(dt) {
   }
 
   // Facing toward aim
-  const ad = _aimTarget.clone().sub(player.pos);
-  if (ad.lengthSq() > 0.01) player.facing = Math.atan2(ad.x, ad.z);
+  if (settings.viewMode === 'fps') {
+    player.facing = _fpsYaw;
+  } else {
+    const ad = _aimTarget.clone().sub(player.pos);
+    if (ad.lengthSq() > 0.01) player.facing = Math.atan2(ad.x, ad.z);
+  }
 
   if (player.root) {
     player.root.position.x = player.pos.x;
@@ -2548,7 +2613,8 @@ function updatePlayer(dt) {
     player.root.position.z = player.pos.z;
     player.root.rotation.y = player.facing;
   }
-  if (player.gunMesh) {
+  // Gun positioning only in non-FPS (in FPS it's attached to camera)
+  if (player.gunMesh && settings.viewMode !== 'fps') {
     const gunY = 1.0 + (player._currentY ?? 0) - (player.root ? (player.root._groundY || 0) : 0);
     player.gunMesh.position.copy(player.pos).setY(gunY);
     player.gunMesh.rotation.y = player.facing;
@@ -2565,50 +2631,112 @@ function updatePlayer(dt) {
 // ============================================================
 //  CAMERA
 // ============================================================
+const VIEW_MODES = ['iso', 'topdown', 'fps'];
+const VIEW_LABELS = { iso: 'ISO', topdown: 'TOP-DOWN', fps: 'FPS' };
+let _fpsPitch = 0; // vertical look angle for FPS
+let _fpsYaw = 0;   // horizontal look angle for FPS
+
 function toggleViewMode() {
-  settings.topDown = !settings.topDown;
-  world.camera = settings.topDown ? world.orthoCam : world.perspCam;
+  const prev = settings.viewMode;
+  const idx = (VIEW_MODES.indexOf(prev) + 1) % VIEW_MODES.length;
+  settings.viewMode = VIEW_MODES[idx];
+  const mode = settings.viewMode;
+
+  // Camera selection
+  if (mode === 'topdown') world.camera = world.orthoCam;
+  else if (mode === 'fps') world.camera = world.fpsCam;
+  else world.camera = world.perspCam;
 
   // Badge feedback
   const badge = elById('viewBadge');
-  badge.textContent = settings.topDown ? 'TOP-DOWN' : 'ISO';
+  badge.textContent = VIEW_LABELS[mode];
   badge.classList.add('flash');
   setTimeout(() => badge.classList.remove('flash'), 1500);
+  screenFlash('rgba(255,255,255,0.15)');
 
-  // Screen flash
-  screenFlash(settings.topDown ? 'rgba(255,255,255,0.15)' : 'rgba(255,136,51,0.15)');
-
-  // Sync pause menu checkbox
-  const chk = elById('chkTopDown');
-  if (chk) chk.checked = settings.topDown;
-
-  // Disable fog in top-down (looks bad from above)
-  if (world.scene) {
-    world.scene.fog = settings.topDown ? null : new THREE.Fog(0x1a1410, 30, 80);
+  // Pointer lock for FPS
+  const canvas = document.getElementById('gameCanvas');
+  if (mode === 'fps') {
+    canvas.requestPointerLock();
+    _fpsYaw = player.facing;
+    _fpsPitch = 0;
+  } else {
+    if (document.pointerLockElement) document.exitPointerLock();
   }
 
-  // Hide ceiling in top-down, show in iso
+  // Fog: off in topdown, close in FPS, normal in iso
+  if (world.scene) {
+    if (mode === 'topdown') world.scene.fog = null;
+    else if (mode === 'fps') world.scene.fog = new THREE.Fog(0x1a1410, 8, 35);
+    else world.scene.fog = new THREE.Fog(0x1a1410, 30, 80);
+  }
+
+  // Ceiling: hide in topdown, show in fps/iso
   if (world.ceilingTiles) {
-    for (const c of world.ceilingTiles) c.visible = !settings.topDown;
+    for (const c of world.ceilingTiles) c.visible = mode !== 'topdown';
+  }
+
+  // Player model: hide in FPS
+  if (player.root) player.root.visible = mode !== 'fps';
+
+  // Gun: in FPS attach to camera, in other modes back to world
+  updateGunAttachment();
+
+  // Crosshair: show in FPS only
+  elById('crosshair').style.display = mode === 'fps' ? 'block' : 'none';
+
+  // Sync pause menu select
+  const sel = elById('selViewMode');
+  if (sel) sel.value = mode;
+}
+
+function updateGunAttachment() {
+  if (!player.gunMesh) return;
+  const mode = settings.viewMode;
+  if (mode === 'fps') {
+    // Remove from world, add as child of FPS camera
+    world.scene.remove(player.gunMesh);
+    world.fpsCam.add(player.gunMesh);
+    player.gunMesh.position.set(0.25, -0.2, -0.45);
+    player.gunMesh.rotation.set(0, Math.PI, 0);
+    player.gunMesh.scale.setScalar(2.5);
+    player.gunMesh.traverse(ch => { if (ch.isMesh) { ch.renderOrder = 999; ch.material.depthTest = false; } });
+  } else {
+    // Back to world space
+    world.fpsCam.remove(player.gunMesh);
+    world.scene.add(player.gunMesh);
+    player.gunMesh.scale.setScalar(1);
+    player.gunMesh.traverse(ch => { if (ch.isMesh) { ch.renderOrder = 999; ch.material.depthTest = false; } });
   }
 }
 
 function updateCamera(dt) {
+  const mode = settings.viewMode;
   world.cameraTarget.lerp(player.pos, 0.25);
 
-  if (settings.topDown) {
-    // Orthographic top-down: camera directly above player
+  if (mode === 'topdown') {
     const cam = world.orthoCam;
     const tz = player.pos.clone();
     cam.position.set(tz.x, 50, tz.z + 0.01);
     cam.lookAt(tz.x, 0, tz.z);
-    // Zoom support
     const sz = world.orthoSize / world.camZoom;
     const wrap = document.getElementById('canvasWrap');
     const a = wrap.clientWidth / wrap.clientHeight;
     cam.left = -sz * a; cam.right = sz * a;
     cam.top = sz; cam.bottom = -sz;
     cam.updateProjectionMatrix();
+  } else if (mode === 'fps') {
+    const cam = world.fpsCam;
+    const eyeY = (player._currentY ?? (player.root ? player.root._groundY || 0 : 0)) + 1.5;
+    cam.position.set(player.pos.x, eyeY, player.pos.z);
+    // Euler order YXZ for FPS
+    cam.rotation.order = 'YXZ';
+    cam.rotation.set(_fpsPitch, _fpsYaw, 0);
+    // Update aim target for shooting (point 20 units ahead)
+    const lookDir = new THREE.Vector3(0, 0, -1).applyEuler(cam.rotation);
+    _aimTarget.copy(cam.position).add(lookDir.multiplyScalar(20));
+    // Player faces where camera looks
+    player.facing = _fpsYaw;
   } else {
     // Perspective isometric
     world.camOffset.copy(world.camBaseOffset).multiplyScalar(world.camZoom);
@@ -3010,6 +3138,9 @@ function resumeGame() {
   gs.phase = 'playing';
   world.clock.start();
   hideMenus();
+  if (settings.viewMode === 'fps') {
+    document.getElementById('gameCanvas').requestPointerLock();
+  }
 }
 
 function endWin() {
@@ -3228,8 +3359,8 @@ function wireButtons() {
   });
 
   elById('btnResume').addEventListener('click',   () => resumeGame());
-  elById('chkTopDown').addEventListener('change', e => {
-    if (settings.topDown !== e.target.checked) toggleViewMode();
+  elById('selViewMode').addEventListener('change', e => {
+    while (settings.viewMode !== e.target.value) toggleViewMode();
   });
   elById('viewBadge').addEventListener('click', e => {
     e.stopPropagation();
