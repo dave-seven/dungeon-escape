@@ -674,8 +674,40 @@ class DungeonAudio {
   sfx_dash()         { this._play('dash'); }
   sfx_playerHit()    { this._play('hit_player'); }
   sfx_enemyHit()     { this._play('hit_enemy'); }
-  sfx_enemyDeath()   { this._play('enemy_death'); }
-  sfx_playerDeath()  { this._play('player_death'); }
+  sfx_enemyDeath()   { this._play('enemy_death'); this._scream(0.4, 280); }
+  sfx_playerDeath()  { this._play('player_death'); this._scream(0.6, 220); }
+
+  // Synthesized death scream: descending tone with vibrato
+  _scream(vol = 0.5, baseFreq = 250) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const dur = 0.6;
+    // Voice oscillator
+    const osc = this.ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(baseFreq * (1.2 + Math.random() * 0.3), t);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.4, t + dur);
+    // Vibrato LFO
+    const lfo = this.ctx.createOscillator();
+    const lfoGain = this.ctx.createGain();
+    lfo.frequency.value = 20 + Math.random() * 15;
+    lfoGain.gain.value = 15;
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+    // Formant filter (voice-like)
+    const bp = this.ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 800 + Math.random() * 400;
+    bp.Q.value = 3;
+    // Envelope
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    osc.connect(bp); bp.connect(g); g.connect(this.sfxGain);
+    osc.start(t); lfo.start(t);
+    osc.stop(t + dur); lfo.stop(t + dur);
+  }
   sfx_pickupKey()    { this._play('pickup_key'); }
   sfx_pickupWeapon() { this._play('pickup_weapon'); }
   sfx_pickupHealth() { this._play('pickup_health'); }
