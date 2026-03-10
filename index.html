@@ -128,9 +128,54 @@
     }
     .inv-slot.active { opacity: 1; border-color: var(--torch); background: rgba(80,50,20,0.7); }
     .inv-slot.locked { opacity: 0.25; }
+    .inv-slot .inv-img { width: 48px; height: 32px; object-fit: contain; display: block; margin: 0 auto 2px; image-rendering: auto; }
     .inv-key   { display: block; font-family: 'Bangers', cursive; font-size: 11px; color: #888; }
     .inv-name  { display: block; font-family: 'Bangers', cursive; font-size: 14px; color: #e8dcc8; }
     .inv-ammo  { display: block; font-size: 12px; color: #aaa; }
+
+    /* Inventory Dialog */
+    #invDialog {
+      display: none;
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(15,12,8,0.95);
+      border: 2px solid var(--torch);
+      border-radius: 8px;
+      padding: 20px 24px;
+      min-width: 420px;
+      z-index: 100;
+      pointer-events: auto;
+    }
+    #invDialog h2 {
+      font-family: 'Bangers', cursive;
+      color: var(--gold);
+      font-size: 22px;
+      letter-spacing: 0.12em;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+    .inv-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 12px;
+      margin: 6px 0;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.04);
+      border: 2px solid transparent;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .inv-row:hover { background: rgba(255,255,255,0.08); }
+    .inv-row.selected { border-color: var(--torch); background: rgba(80,50,20,0.5); }
+    .inv-row.row-locked { opacity: 0.3; cursor: default; }
+    .inv-row .row-img { width: 80px; height: 50px; object-fit: contain; }
+    .inv-row .row-info { flex: 1; }
+    .inv-row .row-name { font-family: 'Bangers', cursive; font-size: 18px; color: #e8dcc8; }
+    .inv-row .row-stats { font-size: 12px; color: #888; margin-top: 2px; }
+    .inv-row .row-ammo { font-family: 'Bangers', cursive; font-size: 16px; color: var(--torch); }
+    #invClose { font-size: 11px; color: #666; text-align: center; margin-top: 10px; }
     #objectives {
       position: absolute;
       bottom: 16px; right: 16px;
@@ -346,10 +391,34 @@
     <div id="reloadPrompt" style="display:none">RELOAD [R]</div>
   </div>
   <div id="inventoryBar">
-    <div class="inv-slot active" id="inv-Pistol"><span class="inv-key">1</span><span class="inv-name">PISTOL</span><span class="inv-ammo">8/24</span></div>
-    <div class="inv-slot locked" id="inv-SMG"><span class="inv-key">2</span><span class="inv-name">SMG</span><span class="inv-ammo">--</span></div>
-    <div class="inv-slot locked" id="inv-Shotgun"><span class="inv-key">3</span><span class="inv-name">SHOTGUN</span><span class="inv-ammo">--</span></div>
-    <div class="inv-slot inv-grenade" id="inv-Grenade"><span class="inv-key">RMB</span><span class="inv-name">GRENADE</span><span class="inv-ammo">2</span></div>
+    <div class="inv-slot active" id="inv-Pistol"><canvas class="inv-img" id="thumb-Pistol" width="96" height="64"></canvas><span class="inv-key">1</span><span class="inv-name">PISTOL</span><span class="inv-ammo">8/24</span></div>
+    <div class="inv-slot locked" id="inv-SMG"><canvas class="inv-img" id="thumb-SMG" width="96" height="64"></canvas><span class="inv-key">2</span><span class="inv-name">SMG</span><span class="inv-ammo">--</span></div>
+    <div class="inv-slot locked" id="inv-Shotgun"><canvas class="inv-img" id="thumb-Shotgun" width="96" height="64"></canvas><span class="inv-key">3</span><span class="inv-name">SHOTGUN</span><span class="inv-ammo">--</span></div>
+    <div class="inv-slot inv-grenade" id="inv-Grenade"><canvas class="inv-img" id="thumb-Grenade" width="96" height="64"></canvas><span class="inv-key">RMB</span><span class="inv-name">GRENADE</span><span class="inv-ammo">2</span></div>
+  </div>
+  <div id="invDialog">
+    <h2>INVENTORY</h2>
+    <div class="inv-row selected" id="row-Pistol" data-weapon="Pistol">
+      <canvas class="row-img" id="rowimg-Pistol" width="160" height="100"></canvas>
+      <div class="row-info"><div class="row-name">PISTOL</div><div class="row-stats">DMG: 16 | RATE: 2.1 | MAG: 8</div></div>
+      <div class="row-ammo">8/24</div>
+    </div>
+    <div class="inv-row row-locked" id="row-SMG" data-weapon="SMG">
+      <canvas class="row-img" id="rowimg-SMG" width="160" height="100"></canvas>
+      <div class="row-info"><div class="row-name">SMG</div><div class="row-stats">DMG: 8 | RATE: 10 | MAG: 30</div></div>
+      <div class="row-ammo">--</div>
+    </div>
+    <div class="inv-row row-locked" id="row-Shotgun" data-weapon="Shotgun">
+      <canvas class="row-img" id="rowimg-Shotgun" width="160" height="100"></canvas>
+      <div class="row-info"><div class="row-name">SHOTGUN</div><div class="row-stats">DMG: 12x6 | RATE: 1.2 | MAG: 4</div></div>
+      <div class="row-ammo">--</div>
+    </div>
+    <div class="inv-row" id="row-Grenade" style="cursor:default">
+      <canvas class="row-img" id="rowimg-Grenade" width="160" height="100"></canvas>
+      <div class="row-info"><div class="row-name">GRENADE</div><div class="row-stats">DMG: 80 | RADIUS: 9 | RIGHT CLICK</div></div>
+      <div class="row-ammo">2</div>
+    </div>
+    <div id="invClose">Press TAB or I to close</div>
   </div>
   <canvas id="minimap" width="180" height="180"></canvas>
   <div id="objectives">
@@ -1154,8 +1223,9 @@ function buildDungeon() {
     { dc:1, dr:0  }, // east face
   ];
 
-  // Shared box geometry for wall blocks
-  const wallBoxGeo = new THREE.BoxGeometry(TILE, WALL_H, TILE);
+  // Shared box geometry for wall blocks (50% thinner)
+  const WALL_THICK = TILE * 0.5;
+  const wallBoxGeo = new THREE.BoxGeometry(WALL_THICK, WALL_H, WALL_THICK);
 
   for (let r = 0; r < MAP_H; r++) {
     for (let c = 0; c < MAP_W; c++) {
@@ -1185,14 +1255,15 @@ function buildDungeon() {
         scene.add(block);
       } else {
         // Interior wall tile — top cap only (not visible from sides)
-        const cap = new THREE.Mesh(new THREE.PlaneGeometry(TILE, TILE), wallTopMat);
+        const cap = new THREE.Mesh(new THREE.PlaneGeometry(WALL_THICK, WALL_THICK), wallTopMat);
         cap.rotation.x = -Math.PI / 2;
         cap.position.set(cx, WALL_H, cz);
         scene.add(cap);
       }
 
-      // Wall collider
-      world.walls.push({ minX:c*TILE, maxX:c*TILE+TILE, minZ:r*TILE, maxZ:r*TILE+TILE });
+      // Wall collider (matches thinner visual)
+      const pad = (TILE - WALL_THICK) / 2;
+      world.walls.push({ minX:c*TILE+pad, maxX:c*TILE+TILE-pad, minZ:r*TILE+pad, maxZ:r*TILE+TILE-pad });
     }
   }
 }
@@ -1394,13 +1465,17 @@ async function attachGun() {
   if (cloned) {
     normalizeToHeight(cloned.root, 0.4);
     cloned.root.position.copy(player.pos).setY(1.0);
+    // Prevent gun from clipping into walls
+    cloned.root.renderOrder = 999;
+    cloned.root.traverse(ch => { if (ch.isMesh) { ch.material = ch.material.clone(); ch.material.depthTest = false; ch.renderOrder = 999; } });
     world.scene.add(cloned.root);
     player.gunMesh = cloned.root;
   } else {
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.08, 0.08, 0.35),
-      new THREE.MeshLambertMaterial({ color: 0x333333 })
+      new THREE.MeshLambertMaterial({ color: 0x333333, depthTest: false })
     );
+    mesh.renderOrder = 999;
     mesh.position.copy(player.pos).setY(1.0);
     world.scene.add(mesh);
     player.gunMesh = mesh;
@@ -1517,6 +1592,7 @@ function initInput() {
       if (e.code === 'KeyR')   startReload();
       if (e.code === 'KeyV')   toggleVisuals();
       if (e.code === 'Escape') pauseGame();
+      if (e.code === 'Tab' || e.code === 'KeyI') { e.preventDefault(); toggleInventory(); }
       if (e.code === 'Digit1') trySwitch('Pistol');
       if (e.code === 'Digit2') trySwitch('SMG');
       if (e.code === 'Digit3') trySwitch('Shotgun');
@@ -2479,11 +2555,99 @@ function updateInventoryHUD() {
     el.classList.toggle('active', player.weapon === w);
     el.classList.toggle('locked', !hasGun);
     el.querySelector('.inv-ammo').textContent = hasGun ? `${g.mag}/${g.reserve}` : '--';
+    // Update dialog row too
+    const row = elById('row-' + w);
+    if (row) {
+      row.classList.toggle('selected', player.weapon === w);
+      row.classList.toggle('row-locked', !hasGun);
+      row.querySelector('.row-ammo').textContent = hasGun ? `${g.mag}/${g.reserve}` : '--';
+    }
   }
   const grenEl = elById('inv-Grenade');
   if (grenEl) {
     grenEl.querySelector('.inv-ammo').textContent = String(player.grenadeCount);
     grenEl.classList.toggle('locked', player.grenadeCount <= 0);
+  }
+  const grenRow = elById('row-Grenade');
+  if (grenRow) grenRow.querySelector('.row-ammo').textContent = String(player.grenadeCount);
+}
+
+// Render a 3D gun model to a canvas thumbnail
+function renderGunThumbnail(path, canvasId) {
+  const cvs = elById(canvasId);
+  if (!cvs) return;
+  const cloned = cloneAsset(path);
+  if (!cloned) return;
+
+  const w = cvs.width, h = cvs.height;
+  const thumbScene = new THREE.Scene();
+  const thumbCam = new THREE.PerspectiveCamera(30, w / h, 0.01, 10);
+  const thumbRenderer = new THREE.WebGLRenderer({ canvas: cvs, alpha: true, antialias: true });
+  thumbRenderer.setSize(w, h);
+  thumbRenderer.setClearColor(0x000000, 0);
+
+  // Light
+  thumbScene.add(new THREE.AmbientLight(0xffffff, 1.2));
+  const dLight = new THREE.DirectionalLight(0xffeedd, 1.5);
+  dLight.position.set(1, 2, 2);
+  thumbScene.add(dLight);
+
+  // Model
+  const root = cloned.root;
+  root.position.set(0, 0, 0);
+  root.rotation.set(0, 0, 0);
+  root.scale.set(1, 1, 1);
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  root.position.sub(center); // center model
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const scale = 0.6 / maxDim;
+  root.scale.setScalar(scale);
+  root.rotation.y = -0.4;
+  root.rotation.x = 0.15;
+  thumbScene.add(root);
+
+  thumbCam.position.set(0, 0.05, 1.2);
+  thumbCam.lookAt(0, 0, 0);
+
+  thumbRenderer.render(thumbScene, thumbCam);
+  thumbScene.remove(root);
+  thumbRenderer.dispose();
+}
+
+function generateAllThumbnails() {
+  const GUN_PATHS = {
+    Pistol:  'assets/toonshooter/Guns/glTF/Pistol.gltf',
+    SMG:     'assets/toonshooter/Guns/glTF/SMG.gltf',
+    Shotgun: 'assets/toonshooter/Guns/glTF/Shotgun.gltf',
+    Grenade: 'assets/toonshooter/Guns/glTF/Grenade.gltf',
+  };
+  for (const [name, path] of Object.entries(GUN_PATHS)) {
+    renderGunThumbnail(path, 'thumb-' + name);
+    renderGunThumbnail(path, 'rowimg-' + name);
+  }
+}
+
+// Inventory dialog
+let _invOpen = false;
+function toggleInventory() {
+  _invOpen = !_invOpen;
+  elById('invDialog').style.display = _invOpen ? 'block' : 'none';
+  if (_invOpen) updateInventoryHUD();
+}
+
+function initInventoryDialog() {
+  // Click rows to select weapon
+  for (const row of document.querySelectorAll('.inv-row[data-weapon]')) {
+    row.addEventListener('click', () => {
+      const w = row.dataset.weapon;
+      if (w === 'Pistol' || player.guns[w].mag > 0 || player.guns[w].reserve > 0) {
+        trySwitch(w);
+        updateInventoryHUD();
+      }
+    });
   }
 }
 
@@ -2714,7 +2878,11 @@ async function resetGame() {
   updateWeaponHUD();
   updateInventoryHUD();
   updateObjectivesHUD();
+  generateAllThumbnails();
+  initInventoryDialog();
   elById('reloadPrompt').style.display = 'none';
+  elById('invDialog').style.display = 'none';
+  _invOpen = false;
 
   world.clock.start();
 }
