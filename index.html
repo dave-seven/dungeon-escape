@@ -333,9 +333,10 @@
       line-height: 1.8;
     }
     #crosshair {
+      --ch-color: rgba(255,255,255,0.7);
       position: absolute;
       top: 50%; left: 50%;
-      width: 14px; height: 14px;
+      width: 20px; height: 20px;
       transform: translate(-50%,-50%);
       pointer-events: none;
       z-index: 12;
@@ -344,10 +345,11 @@
     #crosshair::before, #crosshair::after {
       content: '';
       position: absolute;
-      background: rgba(255,255,255,0.8);
+      background: var(--ch-color);
+      transition: background 0.15s;
     }
-    #crosshair::before { width: 14px; height: 2px; top: 6px; left: 0; }
-    #crosshair::after  { width: 2px; height: 14px; top: 0; left: 6px; }
+    #crosshair::before { width: 20px; height: 2px; top: 9px; left: 0; }
+    #crosshair::after  { width: 2px; height: 20px; top: 0; left: 9px; }
     #notification {
       position: absolute;
       top: 50%; left: 50%;
@@ -741,7 +743,8 @@ class DungeonAudio {
       pickup_weapon:  { file: 'item-pickup-01.ogg',            volume: 0.6  },
       chest_open:     { file: 'lock-open.ogg',                 volume: 0.7  },
       bullet_impact:  { file: 'foley-bullet-hit-metal.wav',     volume: 0.4  },
-      dungeon_ambient:{ file: 'dungeon-ambience-1.ogg',        volume: 0.15 },
+      dungeon_ambient:{ file: 'dungeon-ambience-1.ogg',        volume: 0.3 },
+      dungeon_bgm:    { file: 'boss_battle.mp3',                volume: 0.35 },
     };
   }
 
@@ -855,32 +858,52 @@ class DungeonAudio {
   startMusic() {
     if (!this.ctx) return;
     this.stopMusic(0);
-    const buf = this._buffers.get('dungeon_ambient');
-    if (!buf) return;
-    this.musicGain.gain.setValueAtTime(this._manifest.dungeon_ambient.volume, this.ctx.currentTime);
-    const src = this.ctx.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
-    src.connect(this.musicGain);
-    src.start();
-    this._musicSource = src;
+    this._musicSources = [];
+
+    // BGM (main music)
+    const bgmBuf = this._buffers.get('dungeon_bgm');
+    if (bgmBuf) {
+      this.musicGain.gain.setValueAtTime(this._manifest.dungeon_bgm.volume, this.ctx.currentTime);
+      const bgm = this.ctx.createBufferSource();
+      bgm.buffer = bgmBuf;
+      bgm.loop = true;
+      bgm.connect(this.musicGain);
+      bgm.start();
+      this._musicSources.push(bgm);
+      this._musicSource = bgm;
+    }
+
+    // Ambient (layered underneath)
+    const ambBuf = this._buffers.get('dungeon_ambient');
+    if (ambBuf) {
+      const ambGain = this.ctx.createGain();
+      ambGain.gain.value = this._manifest.dungeon_ambient.volume;
+      ambGain.connect(this.musicGain);
+      const amb = this.ctx.createBufferSource();
+      amb.buffer = ambBuf;
+      amb.loop = true;
+      amb.connect(ambGain);
+      amb.start();
+      this._musicSources.push(amb);
+    }
   }
 
   stopMusic(fadeDuration = 1.5) {
     if (!this.musicGain || !this.ctx) return;
-    const src = this._musicSource;
+    const sources = this._musicSources || (this._musicSource ? [this._musicSource] : []);
     this._musicSource = null;
-    if (!src) return;
+    this._musicSources = [];
+    if (!sources.length) return;
     if (fadeDuration > 0) {
       const now = this.ctx.currentTime;
       this.musicGain.gain.setValueAtTime(this.musicGain.gain.value, now);
       this.musicGain.gain.linearRampToValueAtTime(0, now + fadeDuration);
       setTimeout(() => {
-        try { src.stop(); src.disconnect(); } catch(e) {}
-        if (this.musicGain) this.musicGain.gain.setValueAtTime(this._manifest.dungeon_ambient.volume, this.ctx.currentTime);
+        for (const s of sources) { try { s.stop(); s.disconnect(); } catch(e) {} }
+        if (this.musicGain) this.musicGain.gain.setValueAtTime(this._manifest.dungeon_bgm.volume, this.ctx.currentTime);
       }, (fadeDuration + 0.1) * 1000);
     } else {
-      try { src.stop(); src.disconnect(); } catch(e) {}
+      for (const s of sources) { try { s.stop(); s.disconnect(); } catch(e) {} }
     }
   }
 }
@@ -1806,7 +1829,9 @@ function createTargetSight() {
 }
 
 function updateAim() {
-  if (settings.viewMode !== 'fps') {
+  const isFPS = settings.viewMode === 'fps';
+
+  if (!isFPS) {
     _ray.setFromCamera(input.mousePos, world.camera);
     _ray.ray.intersectPlane(_gndPlane, _aimTarget);
   }
@@ -1816,23 +1841,49 @@ function updateAim() {
   if (!_targetCross && world.scene) createTargetSight();
   _targetEnemy = null;
   let bestScore = Infinity;
-  const aimDir = _aimTarget.clone().sub(player.pos).normalize();
 
-  for (const e of world.enemies) {
-    if (e.isDead || !e.root) continue;
-    const toE = e.pos.clone().sub(player.pos);
-    const dot = toE.dot(aimDir);
-    if (dot < 0.5) continue;
-    const proj = aimDir.clone().multiplyScalar(dot);
-    const perp = toE.clone().sub(proj).length();
-    if (perp < 1.5 && dot < bestScore) {
-      bestScore = dot;
-      _targetEnemy = e;
+  if (isFPS) {
+    // FPS: use camera look direction in 3D, check angle to each enemy
+    const cam = world.fpsCam;
+    const camDir = new THREE.Vector3(0, 0, -1).applyEuler(cam.rotation).normalize();
+    const camPos = cam.position.clone();
+
+    for (const e of world.enemies) {
+      if (e.isDead || !e.root) continue;
+      const eCenter = new THREE.Vector3(e.pos.x, 1.0, e.pos.z);
+      const toE = eCenter.clone().sub(camPos);
+      const dist = toE.length();
+      if (dist < 0.5 || dist > 30) continue;
+      toE.normalize();
+      const dot = toE.dot(camDir);
+      // ~20 degree cone
+      if (dot > 0.94 && dist < bestScore) {
+        bestScore = dist;
+        _targetEnemy = e;
+      }
+    }
+    // Update aim target toward targeted enemy or forward
+    if (_targetEnemy) {
+      _aimTarget.set(_targetEnemy.pos.x, 1.0, _targetEnemy.pos.z);
+    }
+  } else {
+    const aimDir = _aimTarget.clone().sub(player.pos).normalize();
+    for (const e of world.enemies) {
+      if (e.isDead || !e.root) continue;
+      const toE = e.pos.clone().sub(player.pos);
+      const dot = toE.dot(aimDir);
+      if (dot < 0.5) continue;
+      const proj = aimDir.clone().multiplyScalar(dot);
+      const perp = toE.clone().sub(proj).length();
+      if (perp < 1.5 && dot < bestScore) {
+        bestScore = dot;
+        _targetEnemy = e;
+      }
     }
   }
 
   if (_targetCross) {
-    if (_targetEnemy && settings.viewMode !== 'fps') {
+    if (_targetEnemy) {
       const los = hasLineOfSight(player.pos.x, player.pos.z, _targetEnemy.pos.x, _targetEnemy.pos.z);
       const color = los ? 0x00ff66 : 0xff3333;
       const t = performance.now() * 0.004;
@@ -1850,6 +1901,17 @@ function updateAim() {
       _targetCross.visible = true;
     } else {
       _targetCross.visible = false;
+    }
+  }
+
+  // FPS crosshair color feedback
+  if (isFPS) {
+    const ch = elById('crosshair');
+    if (_targetEnemy) {
+      const los = hasLineOfSight(player.pos.x, player.pos.z, _targetEnemy.pos.x, _targetEnemy.pos.z);
+      ch.style.setProperty('--ch-color', los ? 'rgba(0,255,100,0.9)' : 'rgba(255,60,60,0.6)');
+    } else {
+      ch.style.setProperty('--ch-color', 'rgba(255,255,255,0.7)');
     }
   }
 }
@@ -1892,7 +1954,15 @@ function tryShoot() {
 
   const origin = player.pos.clone().setY(1.1);
   for (let p = 0; p < def.pellets; p++) {
-    const dir = _aimTarget.clone().sub(origin).normalize();
+    let dir;
+    if (settings.viewMode === 'fps') {
+      // Shoot along camera look direction
+      dir = new THREE.Vector3(0, 0, -1).applyEuler(world.fpsCam.rotation).normalize();
+      dir.y *= 0.3; // flatten bullet trajectory slightly
+      dir.normalize();
+    } else {
+      dir = _aimTarget.clone().sub(origin).normalize();
+    }
     dir.x += (Math.random()-0.5) * def.spread;
     dir.z += (Math.random()-0.5) * def.spread;
     dir.normalize();
@@ -2314,7 +2384,10 @@ function killPlayer() {
     };
     setTimeout(tick, 400); // start falling after death anim begins
   }
-  setTimeout(() => showMenu('deathMenu'), 2000);
+  setTimeout(() => {
+    if (document.pointerLockElement) document.exitPointerLock();
+    showMenu('deathMenu');
+  }, 2000);
 }
 
 function killEnemy(enemy) {
@@ -2682,7 +2755,7 @@ function toggleViewMode() {
   // Gun: in FPS attach to camera, in other modes back to world
   updateGunAttachment();
 
-  // Crosshair: show in FPS only
+  // Center crosshair in FPS only
   elById('crosshair').style.display = mode === 'fps' ? 'block' : 'none';
 
   // Sync pause menu select
@@ -3151,6 +3224,7 @@ function endWin() {
   const m = Math.floor(secs/60), s = secs%60;
   elById('winStats').innerHTML =
     `Time: <span>${m}:${s.toString().padStart(2,'0')}</span> &nbsp;&nbsp; Kills: <span>${gs.kills}</span>`;
+  if (document.pointerLockElement) document.exitPointerLock();
   showMenu('winMenu');
 }
 
@@ -3290,6 +3364,21 @@ async function resetGame() {
   buildProps();
   await buildPlayer();
   await buildEnemies();
+
+  // Reset view mode to ISO
+  if (settings.viewMode !== 'iso') {
+    // Detach gun from FPS camera if attached
+    if (player.gunMesh && world.fpsCam) world.fpsCam.remove(player.gunMesh);
+    settings.viewMode = 'iso';
+    world.camera = world.perspCam;
+    if (document.pointerLockElement) document.exitPointerLock();
+    if (world.scene) world.scene.fog = new THREE.Fog(0x1a1410, 30, 80);
+    if (world.ceilingTiles) for (const c of world.ceilingTiles) c.visible = true;
+    if (player.root) player.root.visible = true;
+    elById('crosshair').style.display = 'none';
+    elById('viewBadge').textContent = 'ISO';
+    elById('selViewMode').value = 'iso';
+  }
 
   // Reset HUD
   initHealthHUD();
