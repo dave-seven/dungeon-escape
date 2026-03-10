@@ -218,6 +218,27 @@
       transition: opacity 0.05s;
       border-radius: 18px;
     }
+    #viewBadge {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Bangers', cursive;
+      font-size: 14px;
+      letter-spacing: 0.15em;
+      color: #ff8833;
+      background: rgba(10,8,6,0.85);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 4px;
+      padding: 4px 12px;
+      pointer-events: auto;
+      cursor: pointer;
+      opacity: 0.4;
+      transition: opacity 0.3s;
+      z-index: 14;
+    }
+    #viewBadge:hover { opacity: 0.8; }
+    #viewBadge.flash { opacity: 1; }
     #dmgLayer {
       position: absolute;
       inset: 0;
@@ -414,6 +435,7 @@
   </div>
 </div>
 <div id="crosshair"></div>
+<div id="viewBadge">ISO</div>
 <div id="screenFlash"></div>
 <div id="dmgLayer"></div>
 <div id="notification"></div>
@@ -435,6 +457,9 @@
 
 <div class="menu-overlay" id="pauseMenu" style="display:none">
   <div style="font-family:'Bangers',cursive;font-size:52px;color:#e8dcc8;letter-spacing:0.1em">PAUSED</div>
+  <div class="toggle-row">
+    <label><input type="checkbox" id="chkTopDown"> Top-down view (F)</label>
+  </div>
   <button class="menu-btn" id="btnResume">RESUME</button>
   <button class="menu-btn secondary" id="btnRestart">RESTART</button>
 </div>
@@ -845,7 +870,7 @@ const audio = new DungeonAudio();
 //  GLOBAL STATE
 // ============================================================
 const assets   = { cache: new Map() };
-const settings = { usePlaceholders: false };
+const settings = { usePlaceholders: false, topDown: false };
 const input    = { keys: {}, mouseBtn: false, mousePos: new THREE.Vector2() };
 
 const world = {
@@ -1029,6 +1054,26 @@ function resolveCircleWalls(pos, radius) {
       pos.z += (dz/d) * push;
     }
   }
+  // Obstacle colliders — tall blocks, short climbs
+  let climbY = 0;
+  for (const ob of world.obstacles) {
+    if (ob.barrel && !ob.barrel.alive) continue;
+    const dx = pos.x - ob.pos.x, dz = pos.z - ob.pos.z;
+    const dist = Math.sqrt(dx*dx + dz*dz) || 1e-4;
+    const minDist = radius + ob.radius;
+    if (dist < minDist) {
+      if (ob.height <= CLIMB_MAX) {
+        // Climbable — record height to step onto
+        climbY = Math.max(climbY, ob.height);
+      } else {
+        // Blocking — push out
+        const push = minDist - dist;
+        pos.x += (dx/dist) * push;
+        pos.z += (dz/dist) * push;
+      }
+    }
+  }
+  return climbY;
 }
 
 function segAABB(p0, p1, box) {
@@ -1191,6 +1236,7 @@ function buildDungeon() {
       cg.rotation.x = Math.PI/2;
       cg.position.set(wx + TILE/2, 3.2, wz + TILE/2);
       scene.add(cg);
+      world.ceilingTiles.push(cg);
     }
   }
 
@@ -1366,7 +1412,9 @@ async function buildBarrels() {
       mesh.position.copy(pos).setY(0.45);
       world.scene.add(mesh);
     }
-    world.barrels.push({ mesh, pos: pos.clone(), hp: 30, alive: true });
+    const barrel = { mesh, pos: pos.clone(), hp: 30, alive: true };
+    world.barrels.push(barrel);
+    world.obstacles.push({ pos: pos.clone(), radius: 0.5, height: 1.0, barrel });
   }
 }
 
@@ -1387,6 +1435,8 @@ const PROP_HEIGHTS = {
   GasCan: 0.4, BearTrap_Open: 0.2, Landmine: 0.15,
 };
 
+const CLIMB_MAX = 0.6; // objects at or below this height are climbable
+
 function buildProps() {
   for (const [name, c, r, rotY] of PROP_DECS) {
     const path   = `assets/toonshooter/Environment/glTF/${name}.gltf`;
@@ -1394,12 +1444,17 @@ function buildProps() {
     if (!cloned) continue;
     const h = PROP_HEIGHTS[name] || 0.9;
     normalizeToHeight(cloned.root, h);
-    cloned.root.position.copy(tileCenter(c, r));
+    const pos = tileCenter(c, r);
+    cloned.root.position.copy(pos);
     cloned.root.rotation.y = rotY;
     cloned.root.traverse(child => {
       if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
     });
     world.scene.add(cloned.root);
+    // Skip tiny flat items (papers, landmines) — no collision at all
+    if (h <= 0.15) continue;
+    const radius = name.includes('Container') ? 0.8 : name.includes('Sofa') ? 0.7 : 0.55;
+    world.obstacles.push({ pos: pos.clone(), radius, height: h });
   }
 }
 
@@ -1554,13 +1609,31 @@ function initRenderer() {
   cam.position.set(14, 20, 14);
   cam.lookAt(2, 0, 2);
   world.camera = cam;
+  world.perspCam = cam;
+
+  // Top-down orthographic camera
+  const aspect = 16 / 9;
+  const orthoSize = 14;
+  const orthoCam = new THREE.OrthographicCamera(
+    -orthoSize * aspect, orthoSize * aspect,
+    orthoSize, -orthoSize, 0.1, 120
+  );
+  world.orthoCam = orthoCam;
+  world.orthoSize = orthoSize;
 
   function resize() {
     const w = wrap.clientWidth;
     const h = wrap.clientHeight;
     renderer.setSize(w, h, false);
-    cam.aspect = w / h;
+    const a = w / h;
+    cam.aspect = a;
     cam.updateProjectionMatrix();
+    const sz = world.orthoSize;
+    orthoCam.left   = -sz * a;
+    orthoCam.right  =  sz * a;
+    orthoCam.top    =  sz;
+    orthoCam.bottom = -sz;
+    orthoCam.updateProjectionMatrix();
   }
   resize();
   window.addEventListener('resize', resize);
@@ -1574,6 +1647,7 @@ function initInput() {
     input.keys[e.code] = true;
     if (gs.phase === 'playing') {
       if (e.code === 'KeyR')   startReload();
+      if (e.code === 'KeyF')   toggleViewMode();
       if (e.code === 'KeyV')   toggleVisuals();
       if (e.code === 'Escape') { if (_invOpen) toggleInventory(); else pauseGame(); }
       if (e.code === 'Tab' || e.code === 'KeyI') { e.preventDefault(); toggleInventory(); }
@@ -1588,7 +1662,8 @@ function initInput() {
   });
   window.addEventListener('keyup',  e => { delete input.keys[e.code]; });
   window.addEventListener('mousedown', e => {
-    if (_invOpen) return; // Don't shoot while inventory is open
+    if (_invOpen) return;
+    if (e.target.closest('#viewBadge')) return; // Don't shoot when clicking view badge
     if (e.button === 0) input.mouseBtn = true;
     if (e.button === 2 && gs.phase === 'playing') tryThrowGrenade();
   });
@@ -2263,7 +2338,8 @@ function updateEnemies(dt) {
     }
     if (e.root)   e.root.rotation.y = e.facing;
     if (e.gunMesh) {
-      e.gunMesh.position.copy(e.pos).setY(1.0);
+      const gy = (e._currentY ?? (e.root ? e.root._groundY || 0 : 0)) - (e.root ? e.root._groundY || 0 : 0);
+      e.gunMesh.position.copy(e.pos).setY(1.0 + gy);
       e.gunMesh.rotation.y = e.facing;
     }
 
@@ -2276,7 +2352,11 @@ function updateEnemies(dt) {
       e._prevZ = e.pos.z;
       setAnim(e, moving ? 'run' : 'idle');
     }
-    if (e.root) { e.root.position.x = e.pos.x; e.root.position.y = e.root._groundY || 0; e.root.position.z = e.pos.z; }
+    if (e.root) {
+      e.root.position.x = e.pos.x;
+      e.root.position.y = e._currentY ?? (e.root._groundY || 0);
+      e.root.position.z = e.pos.z;
+    }
   }
 }
 
@@ -2300,8 +2380,13 @@ function moveToward(e, target, dt, speed) {
 
 function moveStep(e, dir, dt, speed) {
   const np = e.pos.clone().add(dir.clone().multiplyScalar(speed * dt));
-  resolveCircleWalls(np, 0.4);
+  const climbY = resolveCircleWalls(np, 0.4);
   e.pos.copy(np);
+  // Smooth climb
+  const baseY = e.root ? (e.root._groundY || 0) : 0;
+  const targetY = baseY + climbY;
+  e._currentY = e._currentY ?? baseY;
+  e._currentY += (targetY - e._currentY) * Math.min(1, dt * 8);
 }
 
 function enemyFire(e) {
@@ -2429,10 +2514,15 @@ function updatePlayer(dt) {
 
   const step   = moveDir.clone().multiplyScalar(speed * dt);
   const newPos = player.pos.clone().add(step);
-  resolveCircleWalls(newPos, 0.45);
+  const climbY = resolveCircleWalls(newPos, 0.45);
   newPos.x = THREE.MathUtils.clamp(newPos.x, 0.5, MAP_W*TILE - 0.5);
   newPos.z = THREE.MathUtils.clamp(newPos.z, 0.5, MAP_H*TILE - 0.5);
   player.pos.copy(newPos);
+  // Smooth climb up/down
+  const baseY = player.root ? (player.root._groundY || 0) : 0;
+  const targetY = baseY + climbY;
+  player._currentY = player._currentY ?? baseY;
+  player._currentY += (targetY - player._currentY) * Math.min(1, dt * 8);
 
   // Footsteps
   if (step.lengthSq() > 1e-5 && !player.isDashing) {
@@ -2454,12 +2544,13 @@ function updatePlayer(dt) {
 
   if (player.root) {
     player.root.position.x = player.pos.x;
-    if (!player.isDead) player.root.position.y = player.root._groundY || 0;
+    if (!player.isDead) player.root.position.y = player._currentY ?? (player.root._groundY || 0);
     player.root.position.z = player.pos.z;
     player.root.rotation.y = player.facing;
   }
   if (player.gunMesh) {
-    player.gunMesh.position.copy(player.pos).setY(1.0);
+    const gunY = 1.0 + (player._currentY ?? 0) - (player.root ? (player.root._groundY || 0) : 0);
+    player.gunMesh.position.copy(player.pos).setY(gunY);
     player.gunMesh.rotation.y = player.facing;
   }
 
@@ -2474,20 +2565,64 @@ function updatePlayer(dt) {
 // ============================================================
 //  CAMERA
 // ============================================================
+function toggleViewMode() {
+  settings.topDown = !settings.topDown;
+  world.camera = settings.topDown ? world.orthoCam : world.perspCam;
+
+  // Badge feedback
+  const badge = elById('viewBadge');
+  badge.textContent = settings.topDown ? 'TOP-DOWN' : 'ISO';
+  badge.classList.add('flash');
+  setTimeout(() => badge.classList.remove('flash'), 1500);
+
+  // Screen flash
+  screenFlash(settings.topDown ? 'rgba(255,255,255,0.15)' : 'rgba(255,136,51,0.15)');
+
+  // Sync pause menu checkbox
+  const chk = elById('chkTopDown');
+  if (chk) chk.checked = settings.topDown;
+
+  // Disable fog in top-down (looks bad from above)
+  if (world.scene) {
+    world.scene.fog = settings.topDown ? null : new THREE.Fog(0x1a1410, 30, 80);
+  }
+
+  // Hide ceiling in top-down, show in iso
+  if (world.ceilingTiles) {
+    for (const c of world.ceilingTiles) c.visible = !settings.topDown;
+  }
+}
+
 function updateCamera(dt) {
   world.cameraTarget.lerp(player.pos, 0.25);
-  world.camOffset.copy(world.camBaseOffset).multiplyScalar(world.camZoom);
-  const target = player.pos.clone().add(world.camOffset);
-  world.camera.position.lerp(target, 0.2);
+
+  if (settings.topDown) {
+    // Orthographic top-down: camera directly above player
+    const cam = world.orthoCam;
+    const tz = player.pos.clone();
+    cam.position.set(tz.x, 50, tz.z + 0.01);
+    cam.lookAt(tz.x, 0, tz.z);
+    // Zoom support
+    const sz = world.orthoSize / world.camZoom;
+    const wrap = document.getElementById('canvasWrap');
+    const a = wrap.clientWidth / wrap.clientHeight;
+    cam.left = -sz * a; cam.right = sz * a;
+    cam.top = sz; cam.bottom = -sz;
+    cam.updateProjectionMatrix();
+  } else {
+    // Perspective isometric
+    world.camOffset.copy(world.camBaseOffset).multiplyScalar(world.camZoom);
+    const target = player.pos.clone().add(world.camOffset);
+    world.camera.position.lerp(target, 0.2);
+    world.camera.lookAt(world.cameraTarget.x, 0.5, world.cameraTarget.z);
+  }
 
   if (gs.camShake > 0) {
     gs.camShake -= dt * 5;
     const s = Math.max(0, gs.camShake);
     world.camera.position.x += (Math.random()-0.5) * s * 0.25;
     world.camera.position.y += (Math.random()-0.5) * s * 0.12;
-    world.camera.position.z += (Math.random()-0.5) * s * 0.5;
   }
-  world.camera.lookAt(world.cameraTarget.x, 0.5, world.cameraTarget.z);
 }
 
 // ============================================================
@@ -2980,6 +3115,8 @@ async function resetGame() {
   world.tracers     = [];
   world.enemies     = [];
   world.barrels     = [];
+  world.obstacles   = [];
+  world.ceilingTiles = [];
   world.pickups     = [];
 
   // Reset player
@@ -3091,6 +3228,13 @@ function wireButtons() {
   });
 
   elById('btnResume').addEventListener('click',   () => resumeGame());
+  elById('chkTopDown').addEventListener('change', e => {
+    if (settings.topDown !== e.target.checked) toggleViewMode();
+  });
+  elById('viewBadge').addEventListener('click', e => {
+    e.stopPropagation();
+    if (gs.phase === 'playing') toggleViewMode();
+  });
   elById('btnRestart').addEventListener('click',  async () => { hideMenus(); await resetGame(); audio.startMusic(); });
   elById('btnRetry').addEventListener('click',    async () => { hideMenus(); await resetGame(); audio.startMusic(); });
   elById('btnPlayAgain').addEventListener('click',async () => { hideMenus(); await resetGame(); audio.startMusic(); });
